@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<title>Редактор изображений</title>
+<style>
+  body { font-family: sans-serif; background: #f8f9fa; }
+  #canvas { border: 1px solid #ccc; cursor: crosshair; }
+  button { margin:5px; border:none; background:#ddd; padding:8px 10px; border-radius:10px; transition:0.2s; display:flex; align-items:center; justify-content:center; }
+  button:hover { background:#ccc; }
+  button.active { background:#7cb7ff; color:white; }
+  #toolbar { margin-bottom:10px; display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+  #filtersSection { margin-top:10px; border:1px solid #ccc; padding:10px; width:fit-content; background:#fafafa; border-radius:8px; }
+  #filteredPreview { margin-top:10px; max-width:400px; border:1px solid #ccc; }
+  .toggle-wrapper { display:inline-block; position:relative; }
+  .toggle-checkbox { display:none; }
+  .toggle-container { width:50px; height:26px; border-radius:20px; background-color:#ccc; cursor:pointer; position:relative; transition:background-color 0.3s; }
+  .toggle-container::before { content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:white; transition:0.3s; }
+  .toggle-checkbox:checked + .toggle-container { background-color:#4CAF50; }
+  .toggle-checkbox:checked + .toggle-container::before { transform:translateX(24px); }
+  input[type=range] { vertical-align: middle; }
+  .line-width-control { display:flex; align-items:center; gap:5px; }
+  .line-width-control input[type=number] { width:50px; }
+</style>
+</head>
+<body>
+
+<h2>Редактор изображений</h2>
+
+<div id="startMenu">
+  <button onclick="showLoadImage()">Загрузить изображение</button>
+  <button onclick="showCreateCanvas()">Создать новое</button>
+</div>
+
+<div id="loadImageSection" style="display:none;">
+  <input type="file" id="fileInput" accept="image/*" />
+  <button onclick="backToStart()">Отмена</button>
+</div>
+
+<div id="createCanvasSection" style="display:none;">
+  Ширина: <input type="number" id="canvasWidth" value="600" />
+  Высота: <input type="number" id="canvasHeight" value="400" />
+  <button onclick="createCanvas()">Создать</button>
+  <button onclick="backToStart()">Отмена</button>
+</div>
+
+<div id="editorSection" style="display:none;">
+  <div id="toolbar">
+    <button onclick="saveImage()">Сохранить</button>
+    <button onclick="createNewCanvas()">Новое изображение</button>
+    <button id="btnBrush" onclick="setTool('brush')">✏️ Рисовать</button>
+    <button id="btnLine" onclick="setTool('line')"><img src="https://img.icons8.com/ios-filled/24/000000/line.png"/></button>
+    <button id="btnCircle" onclick="setTool('circle')"><img src="https://img.icons8.com/ios-filled/24/circled.png"/></button>
+    <button id="btnFill" onclick="setTool('fill')"><img src="https://img.icons8.com/ios-filled/24/000000/paint-bucket.png"/></button>
+    <button onclick="undo()"><img src="https://img.icons8.com/ios-filled/24/000000/undo.png"/></button>
+    <button onclick="clearCanvas()"><img src="https://img.icons8.com/ios-filled/24/000000/delete.png"/></button>
+    Цвет: <input type="color" id="colorPicker" value="#000000" />
+    <div class="line-width-control">
+      Толщина:
+      <input type="range" id="lineWidthSlider" min="1" max="20" value="2">
+      <input type="number" id="lineWidthNumber" min="1" max="20" value="2">
+    </div>
+    Тип кисти: 
+    <select id="brushType" style="display:none;">
+      <option value="round">Круглая</option>
+      <option value="square">Квадратная</option>
+    </select>
+    Предпросмотр кисти:
+    <canvas id="brushPreview" width="20" height="20" style="display:none;"></canvas>
+    Фильтры:
+    <div class="toggle-wrapper">
+      <input class="toggle-checkbox" id="filterToggle" type="checkbox">
+      <div class="toggle-container" onclick="toggleFilters()"></div>
+    </div>
+  </div>
+
+  <canvas id="canvas"></canvas>
+
+  <div id="filtersSection" style="display:none;">
+    <h3>Наложить фильтр</h3>
+    <button onclick="applyFilter('gaussian')">Гауссов фильтр (preview)</button>
+    <button onclick="applyFilter('average')">Усредняющий фильтр (preview)</button>
+    <button onclick="applyFilter('black_white')">Чёрно-белый фильтр (preview)</button>
+    <button onclick="applyFilterToCanvas('gaussian')">Гауссов фильтр (на canvas)</button>
+    <button onclick="applyFilterToCanvas('average')">Усредняющий фильтр (на canvas)</button>
+    <button onclick="applyFilterToCanvas('black_white')">Чёрно-белый фильтр (на canvas)</button>
+    <button onclick="hideFilters()">Закрыть</button>
+    <div><img id="filteredPreview"></div>
+  </div>
+</div>
+
+<script>
+let canvas = document.getElementById('canvas');
+let ctx = canvas.getContext('2d');
+let tool = null;
+let undoStack = [];
+let colorPicker = document.getElementById('colorPicker');
+let firstClick = null;
+let previewImage = null;
+
+let lineWidthSlider = document.getElementById('lineWidthSlider');
+let lineWidthNumber = document.getElementById('lineWidthNumber');
+lineWidthSlider.addEventListener('input',()=>{ lineWidthNumber.value = lineWidthSlider.value; drawBrushPreview(); });
+lineWidthNumber.addEventListener('input',()=>{ lineWidthSlider.value = lineWidthNumber.value; drawBrushPreview(); });
+
+function showLoadImage(){ hideAll(); document.getElementById('loadImageSection').style.display='block'; }
+function showCreateCanvas(){ hideAll(); document.getElementById('createCanvasSection').style.display='block'; }
+function backToStart(){ hideAll(); document.getElementById('startMenu').style.display='block'; undoStack=[]; }
+function hideAll(){ ['startMenu','loadImageSection','createCanvasSection','editorSection'].forEach(id => document.getElementById(id).style.display='none'); }
+
+document.getElementById('fileInput').addEventListener('change', e=>{
+  let file = e.target.files[0]; if(!file) return;
+  let reader = new FileReader();
+  reader.onload = evt=>{
+    let img = new Image();
+    img.onload = ()=>{
+      canvas.width=img.width; canvas.height=img.height;
+      ctx.drawImage(img,0,0); saveState(); showEditor();
+    };
+    img.src = evt.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+function createCanvas(){
+  let w=parseInt(document.getElementById('canvasWidth').value);
+  let h=parseInt(document.getElementById('canvasHeight').value);
+  if(w>0 && h>0){
+    canvas.width=w; canvas.height=h;
+    ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,w,h);
+    saveState(); showEditor();
+  }
+}
+
+function showEditor(){ hideAll(); document.getElementById('editorSection').style.display='block'; }
+function saveState(){ if(undoStack.length>20) undoStack.shift(); undoStack.push(ctx.getImageData(0,0,canvas.width,canvas.height)); }
+function undo(){ if(undoStack.length>1){ undoStack.pop(); ctx.putImageData(undoStack[undoStack.length-1],0,0); } }
+function clearCanvas(){ saveState(); ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,canvas.width,canvas.height); }
+
+function setTool(name){
+  tool=name; firstClick=null; previewImage=null;
+  document.querySelectorAll('#toolbar button').forEach(b=>b.classList.remove('active'));
+  if(name==='line') document.getElementById('btnLine').classList.add('active');
+  if(name==='circle') document.getElementById('btnCircle').classList.add('active');
+  if(name==='fill') document.getElementById('btnFill').classList.add('active');
+  if(name==='brush') document.getElementById('btnBrush').classList.add('active');
+  if(name!=='brush') hideBrushSettings();
+  else showBrushSettings();
+}
+
+function setPixel(x, y, color, imageData){
+  if(x<0 || y<0 || x>=imageData.width || y>=imageData.height) return;
+  let idx = (y*imageData.width + x)*4;
+  imageData.data[idx] = color.r;
+  imageData.data[idx+1] = color.g;
+  imageData.data[idx+2] = color.b;
+  imageData.data[idx+3] = 255;
+}
+
+// Линия Брезенхема с толщиной
+function drawLineBresenhamThick(x0, y0, x1, y1, color, lineWidth, imageData){
+  let dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+  let dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy, e2;
+  while(true){
+    for(let ix=-Math.floor(lineWidth/2); ix<=Math.floor(lineWidth/2); ix++){
+      for(let iy=-Math.floor(lineWidth/2); iy<=Math.floor(lineWidth/2); iy++){
+        setPixel(x0+ix, y0+iy, color, imageData);
+      }
+    }
+    if(x0===x1 && y0===y1) break;
+    e2 = 2*err;
+    if(e2 >= dy){ err += dy; x0 += sx; }
+    if(e2 <= dx){ err += dx; y0 += sy; }
+  }
+}
+
+// Квадратная окружность Брезенхема
+function drawCircleBresenhamThick(cx, cy, radius, color, lineWidth, imageData){
+  for(let y=-radius-lineWidth; y<=radius+lineWidth; y++){
+    for(let x=-radius-lineWidth; x<=radius+lineWidth; x++){
+      let dist = Math.sqrt(x*x + y*y);
+      if(dist >= radius - lineWidth/2 && dist <= radius + lineWidth/2){
+        for(let ix=-Math.floor(lineWidth/2); ix<=Math.floor(lineWidth/2); ix++){
+          for(let iy=-Math.floor(lineWidth/2); iy<=Math.floor(lineWidth/2); iy++){
+            setPixel(cx+x+ix, cy+y+iy, color, imageData);
+          }
+        }
+      }
+    }
+  }
+}
+
+// Линия и окружность
+canvas.addEventListener('mousedown', e => {
+  if(tool==='line' || tool==='circle'){
+    let rect=canvas.getBoundingClientRect();
+    firstClick={x: Math.floor(e.clientX-rect.left), y: Math.floor(e.clientY-rect.top)};
+    previewImage=ctx.getImageData(0,0,canvas.width,canvas.height);
+  }
+});
+
+canvas.addEventListener('mouseup', e => {
+  if(tool==='line' || tool==='circle'){
+    if(!firstClick) return;
+    let rect=canvas.getBoundingClientRect();
+    let x = Math.floor(e.clientX-rect.left);
+    let y = Math.floor(e.clientY-rect.top);
+    saveState();
+    let imgData = ctx.getImageData(0,0,canvas.width,canvas.height);
+    let color = hexToRgb(colorPicker.value);
+    let lineWidth = parseInt(lineWidthNumber.value);
+    if(tool==='line') drawLineBresenhamThick(firstClick.x, firstClick.y, x, y, color, lineWidth, imgData);
+    if(tool==='circle'){
+      let radius = Math.round(Math.sqrt((x-firstClick.x)**2 + (y-firstClick.y)**2));
+      drawCircleBresenhamThick(firstClick.x, firstClick.y, radius, color, lineWidth, imgData);
+    }
+    ctx.putImageData(imgData,0,0);
+    firstClick=null;
+    previewImage=null;
+  }
+});
+
+canvas.addEventListener('mousemove', e => {
+  if((tool==='line' || tool==='circle') && firstClick){
+    let rect=canvas.getBoundingClientRect();
+    let x=Math.floor(e.clientX-rect.left);
+    let y=Math.floor(e.clientY-rect.top);
+    ctx.putImageData(previewImage,0,0);
+    let imgData = ctx.getImageData(0,0,canvas.width,canvas.height);
+    let color = hexToRgb(colorPicker.value);
+    let lineWidth = parseInt(lineWidthNumber.value);
+    if(tool==='line') drawLineBresenhamThick(firstClick.x, firstClick.y, x, y, color, lineWidth, imgData);
+    if(tool==='circle'){
+      let radius = Math.round(Math.sqrt((x-firstClick.x)**2 + (y-firstClick.y)**2));
+      drawCircleBresenhamThick(firstClick.x, firstClick.y, radius, color, lineWidth, imgData);
+    }
+    ctx.putImageData(imgData,0,0);
+  }
+});
+
+// Кисть
+let brushType = 'round';
+let isDrawing = false;
+
+function showBrushSettings(){
+  if(!document.getElementById('brushSettings')){
+    let div = document.createElement('div');
+    div.id = 'brushSettings';
+    div.innerHTML = 'Тип кисти: <select id="brushType"><option value="round">Круглая</option><option value="square">Квадратная</option></select>' +
+                    '<div id="brushPreviewContainer" style="margin-top:5px;"></div>';
+    document.getElementById('toolbar').appendChild(div);
+
+    let container = document.getElementById('brushPreviewContainer');
+    let canvasPreview = document.createElement('canvas');
+    canvasPreview.width = 20; canvasPreview.height = 20;
+    container.appendChild(canvasPreview);
+    window.brushPreviewCanvas = canvasPreview;
+    window.ctxPreview = canvasPreview.getContext('2d');
+
+    document.getElementById('brushType').addEventListener('change', e=>{
+      brushType = e.target.value;
+      drawBrushPreview();
+    });
+  }
+  drawBrushPreview();
+}
+
+function hideBrushSettings(){
+  let el = document.getElementById('brushSettings');
+  if(el) el.style.display='none';
+}
+
+function drawBrushPreview(){
+  if(!window.ctxPreview) return;
+  ctxPreview.clearRect(0,0,20,20);
+  ctxPreview.fillStyle = colorPicker.value;
+  let size = parseInt(lineWidthNumber.value);
+  if(brushType==='round'){
+    ctxPreview.beginPath();
+    ctxPreview.arc(10,10,size/2,0,Math.PI*2);
+    ctxPreview.fill();
+  } else {
+    ctxPreview.fillRect(10-Math.floor(size/2),10-Math.floor(size/2),size,size);
+  }
+}
+
+canvas.addEventListener('mousedown', e => {
+  if(tool==='brush'){
+    isDrawing = true;
+    saveState();
+    drawBrushAtMouse(e);
+  }
+});
+canvas.addEventListener('mousemove', e => {
+  if(tool==='brush' && isDrawing) drawBrushAtMouse(e);
+});
+canvas.addEventListener('mouseup', e => { if(tool==='brush') isDrawing=false; });
+canvas.addEventListener('mouseout', e => { if(tool==='brush') isDrawing=false; });
+
+function drawBrushAtMouse(e){
+  let rect = canvas.getBoundingClientRect();
+  let x = Math.floor(e.clientX - rect.left);
+  let y = Math.floor(e.clientY - rect.top);
+  let color = hexToRgb(colorPicker.value);
+  let size = parseInt(lineWidthNumber.value);
+  let imgData = ctx.getImageData(0,0,canvas.width,canvas.height);
+
+  for(let dy=-Math.floor(size/2); dy<=Math.floor(size/2); dy++){
+    for(let dx=-Math.floor(size/2); dx<=Math.floor(size/2); dx++){
+      if(brushType==='round'){
+        if(dx*dx + dy*dy <= (size/2)*(size/2)) setPixel(x+dx,y+dy,color,imgData);
+      } else {
+        setPixel(x+dx,y+dy,color,imgData);
+      }
+    }
+  }
+  ctx.putImageData(imgData,0,0);
+}
+
+// Заливка
+function floodFill(x,y,imageData,fillColor){
+  let data=imageData.data,w=imageData.width,h=imageData.height,stack=[]; 
+  let pixelPos=(y*w+x)*4;
+  let startColor={r:data[pixelPos],g:data[pixelPos+1],b:data[pixelPos+2],a:data[pixelPos+3]};
+  function colorsMatch(a,b){return a.r===b.r && a.g===b.g && a.b===b.b && a.a===b.a;}
+  if(colorsMatch(startColor,fillColor)) return;
+  stack.push({x,y});
+  while(stack.length){
+    let {x:px,y:py}=stack.pop();
+    let pos=(py*w+px)*4;
+    if(px>=0 && px<w && py>=0 && py<h){
+      let currentColor={r:data[pos],g:data[pos+1],b:data[pos+2],a:data[pos+3]};
+      if(colorsMatch(currentColor,startColor)){
+        data[pos]=fillColor.r; data[pos+1]=fillColor.g; data[pos+2]=fillColor.b; data[pos+3]=255;
+        stack.push({x:px+1,y:py}); stack.push({x:px-1,y:py}); stack.push({x:px,y:py+1}); stack.push({x:px,y:py-1});
+      }
+    }
+  }
+  ctx.putImageData(imageData,0,0);
+}
+
+// Фильтры
+function toggleFilters(){
+  let toggle = document.getElementById('filterToggle');
+  toggle.checked = !toggle.checked;
+  if(toggle.checked) showFilters(); else hideFilters();
+}
+function showFilters(){ document.getElementById('filtersSection').style.display='block'; }
+function hideFilters(){
+  document.getElementById('filtersSection').style.display='none';
+  document.getElementById('filteredPreview').src = "";
+  document.getElementById('filterToggle').checked = false;
+}
+async function applyFilter(type){
+  let dataURL = canvas.toDataURL('image/png');
+  try{
+    let response = await fetch('http://127.0.0.1:5000/apply_filter',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({image:dataURL, filter:type})
+    });
+    let result = await response.json();
+    if(result.image) document.getElementById('filteredPreview').src=result.image;
+    else alert('Ошибка применения фильтра');
+  }catch(err){ alert('Не удалось связаться с сервером Python.'); }
+}
+async function applyFilterToCanvas(type){
+  let dataURL = canvas.toDataURL('image/png');
+  try{
+    let response = await fetch('http://127.0.0.1:5000/apply_filter',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({image:dataURL, filter:type})
+    });
+    let result = await response.json();
+    if(result.image){
+      let img = new Image();
+      img.onload = ()=>{
+        saveState(); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.drawImage(img,0,0);
+      };
+      img.src = result.image;
+    } else alert('Ошибка применения фильтра');
+  }catch(err){ alert('Не удалось связаться с сервером Python.'); }
+}
+
+// Служебные
+function saveImage() {
+  let fileName = prompt("Введите имя файла для сохранения", "image");
+  if (!fileName) return;
+  let dataURL = canvas.toDataURL('image/png');
+  let a = document.createElement('a');
+  a.href = dataURL;
+  a.download = fileName + '.png';
+  a.click();
+}
+function createNewCanvas() {
+  undoStack = [];
+  firstClick = null;
+  previewImage = null;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  backToStart();
+}
+
+function hexToRgb(hex){
+  hex=hex.replace(/^#/,'');
+  if(hex.length===3) hex=hex.split('').map(x=>x+x).join('');
+  let num=parseInt(hex,16);
+  return {r:(num>>16)&255,g:(num>>8)&255,b:num&255};
+}
+</script>
+</body>
+</html>
