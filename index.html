@@ -81,9 +81,15 @@
     <button onclick="applyFilter('gaussian')">Гауссов фильтр (preview)</button>
     <button onclick="applyFilter('average')">Усредняющий фильтр (preview)</button>
     <button onclick="applyFilter('black_white')">Чёрно-белый фильтр (preview)</button>
+    <button onclick="applyFilter('sobel')">Фильтр Собеля (preview)</button>
+    <button onclick="applyFilter('prewitt')">Фильтр Превитта (preview)</button>
+    <button onclick="applyFilter('kmeans')">K-средних (preview)</button>
     <button onclick="applyFilterToCanvas('gaussian')">Гауссов фильтр (на canvas)</button>
     <button onclick="applyFilterToCanvas('average')">Усредняющий фильтр (на canvas)</button>
     <button onclick="applyFilterToCanvas('black_white')">Чёрно-белый фильтр (на canvas)</button>
+    <button onclick="applyFilterToCanvas('sobel')">Фильтр Собеля (на canvas)</button>
+    <button onclick="applyFilterToCanvas('prewitt')">Фильтр Превитта (на canvas)</button>
+    <button onclick="applyFilterToCanvas('kmeans')">K-средних (на canvas)</button>
     <button onclick="hideFilters()">Закрыть</button>
     <div><img id="filteredPreview"></div>
   </div>
@@ -97,6 +103,7 @@ let undoStack = [];
 let colorPicker = document.getElementById('colorPicker');
 let firstClick = null;
 let previewImage = null;
+let currentFilter = null;
 
 let lineWidthSlider = document.getElementById('lineWidthSlider');
 let lineWidthNumber = document.getElementById('lineWidthNumber');
@@ -157,7 +164,7 @@ function setPixel(x, y, color, imageData){
   imageData.data[idx+3] = 255;
 }
 
-// Линия Брезенхема с толщиной
+// Линия Брезенхема
 function drawLineBresenhamThick(x0, y0, x1, y1, color, lineWidth, imageData){
   let dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
   let dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
@@ -220,6 +227,19 @@ canvas.addEventListener('mouseup', e => {
     previewImage=null;
   }
 });
+
+canvas.addEventListener('click', e => {
+  if (tool === 'fill') {
+    let rect = canvas.getBoundingClientRect();
+    let x = Math.floor(e.clientX - rect.left);
+    let y = Math.floor(e.clientY - rect.top);
+    saveState();
+    let imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let fillColor = hexToRgb(colorPicker.value);
+    floodFill(x, y, imgData, fillColor);
+  }
+});
+
 
 canvas.addEventListener('mousemove', e => {
   if((tool==='line' || tool==='circle') && firstClick){
