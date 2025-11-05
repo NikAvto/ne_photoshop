@@ -24,7 +24,6 @@ def apply_filter(image, kernel):
     return output
 
 def black_white_filter(image):
-    # image - numpy array с форматом [H, W, C], значения от 0 до 1
     h, w, _ = image.shape
     bw_image = np.zeros_like(image)
     for x in range(h):
@@ -33,6 +32,52 @@ def black_white_filter(image):
             brightness = 0.299 * r + 0.587 * g + 0.114 * b
             bw_image[x, y] = [brightness, brightness, brightness]
     return bw_image
+
+def sobel_filter(image):
+    gray = np.mean(image, axis=2)
+    Kx = np.array([[-1, 0, 1],
+                   [-2, 0, 2],
+                   [-1, 0, 1]], dtype=np.float32)
+    Ky = np.array([[-1, -2, -1],
+                   [ 0,  0,  0],
+                   [ 1,  2,  1]], dtype=np.float32)
+    Gx = convolve2d(gray, Kx, mode='same', boundary='symm')
+    Gy = convolve2d(gray, Ky, mode='same', boundary='symm')
+    magnitude = np.sqrt(Gx**2 + Gy**2)
+    magnitude = (magnitude - magnitude.min()) / (magnitude.max() - magnitude.min())
+    return np.stack([magnitude]*3, axis=2)
+
+def prewitt_filter(image):
+    gray = np.mean(image, axis=2)
+    Kx = np.array([[-1, 0, 1],
+                   [-1, 0, 1],
+                   [-1, 0, 1]], dtype=np.float32)
+    Ky = np.array([[-1, -1, -1],
+                   [ 0,  0,  0],
+                   [ 1,  1,  1]], dtype=np.float32)
+    Gx = convolve2d(gray, Kx, mode='same', boundary='symm')
+    Gy = convolve2d(gray, Ky, mode='same', boundary='symm')
+    magnitude = np.sqrt(Gx**2 + Gy**2)
+    magnitude = (magnitude - magnitude.min()) / (magnitude.max() - magnitude.min())
+    return np.stack([magnitude]*3, axis=2)
+
+def kmeans_filter(image, k=4, max_iter=10):
+    h, w, c = image.shape
+    data = image.reshape((-1, 3))
+    
+    np.random.seed(42)
+    centroids = data[np.random.choice(data.shape[0], k, replace=False)]
+    
+    for _ in range(max_iter):
+        distances = np.linalg.norm(data[:, None] - centroids[None, :], axis=2)
+        labels = np.argmin(distances, axis=1)
+        new_centroids = np.array([data[labels == j].mean(axis=0) if np.any(labels == j) else centroids[j] for j in range(k)])
+        if np.allclose(centroids, new_centroids):
+            break
+        centroids = new_centroids
+
+    clustered = centroids[labels].reshape((h, w, 3))
+    return clustered
 
 @app.route('/apply_filter', methods=['POST'])
 def apply_filter_route():
@@ -56,11 +101,16 @@ def apply_filter_route():
             filtered = apply_filter(image, kernel)
         elif filter_type == 'black_white':
             filtered = black_white_filter(image)
+        elif filter_type == 'sobel':
+            filtered = sobel_filter(image)
+        elif filter_type == 'prewitt':
+            filtered = prewitt_filter(image)
+        elif filter_type == 'kmeans':
+            filtered = kmeans_filter(image, k=4)
         else:
             return jsonify({'error': 'Unknown filter'}), 400
-
+            
         filtered_img = Image.fromarray(np.clip(filtered * 255, 0, 255).astype(np.uint8))
-
         buffer = io.BytesIO()
         filtered_img.save(buffer, format='PNG')
         img_b64_out = 'data:image/png;base64,' + base64.b64encode(buffer.getvalue()).decode('utf-8')
